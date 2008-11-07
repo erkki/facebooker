@@ -363,6 +363,20 @@ class RailsIntegrationTest < Test::Unit::TestCase
     flexmock(@controller).should_receive(:new_facebook_session).once.and_return(session).ordered
     get :index, modified_params
   end
+
+  def test_session_can_be_secured_with_invalid_auth_token_from_params
+    auth_token = 'ohaiauthtokenhere111'
+    modified_params = example_rails_params_including_fb
+    modified_params.delete('fb_sig_session_key')
+    modified_params['auth_token'] = auth_token
+    session_mock = flexmock(session = Facebooker::Session.create(ENV['FACEBOOK_API_KEY'], ENV['FACEBOOK_SECRET_KEY']))
+    session_params = { 'session_key' => '123', 'uid' => '321' }
+    session_mock.should_receive(:post).with('facebook.auth.getSession', :auth_token => auth_token).once.and_return{ raise Facebooker::Session::MissingOrInvalidParameter, 'Invalid parameter'}
+    session_mock.should_receive(:post).with('facebook.auth.createToken').once.and_return('token2')
+    session_mock.should_receive(:post).with('facebook.auth.getSession', :auth_token => 'token2').once.and_return(session_params).ordered
+    flexmock(@controller).should_receive(:new_facebook_session).once.and_return(session).ordered
+    get :index, modified_params
+  end
   
   def test_session_secured_with_auth_token_if_cookies_expired
       auth_token = 'ohaiauthtokenhere111'
