@@ -155,7 +155,15 @@ module Facebooker
         if params['auth_token']
           @facebook_session = new_facebook_session
           @facebook_session.auth_token = params['auth_token']
-          @facebook_session.secure!
+          begin
+            @facebook_session.secure!
+            # Sometimes people visit the app
+            # with auth_token copied from someone elses request
+            # and thus params['auth_token'] is invalid.
+            # Try to fix that by clearing the current token.
+          rescue Facebooker::Session::MissingOrInvalidParameter => e
+            @facebook_session.auth_token = nil
+          end
           session[:facebook_session] = @facebook_session
         end
       end
@@ -185,9 +193,12 @@ module Facebooker
       
       def create_new_facebook_session_and_redirect!
         session[:facebook_session] = new_facebook_session
-        url_params = after_facebook_login_url.nil? ? {} : {:next=>after_facebook_login_url}
-        redirect_to session[:facebook_session].login_url(url_params) unless @installation_required
+        redirect_to session[:facebook_session].login_url(login_url_params) unless @installation_required
         false
+      end
+      
+      def login_url_params
+        after_facebook_login_url.nil? ? {} : {:next=>after_facebook_login_url}
       end
       
       def new_facebook_session
