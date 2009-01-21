@@ -62,7 +62,11 @@ module Facebooker
       end
 
       def set_facebook_session
-        session_set_handler(session_already_secured? ||  secure_with_facebook_params! || secure_with_cookies! || secure_with_token!)
+        if request_is_facebook_tab?
+          session_set_handler(session_already_secured? ||  secure_with_facebook_profile_params!)
+        else
+          session_set_handler(session_already_secured? ||  secure_with_facebook_params! || secure_with_cookies! || secure_with_token!)
+        end
       end
 
       def session_set_handler(session_set)
@@ -80,8 +84,17 @@ module Facebooker
 
       def facebook_params
         @facebook_params ||= verified_facebook_params
-      end      
-      
+      end
+
+      def facebook_profile_params
+        unless @facebook_profile_params
+          @facebook_profile_params = verified_facebook_params
+          @facebook_profile_params['user'] = @facebook_profile_params.delete('profile_user')
+          @facebook_profile_params['session_key'] = @facebook_profile_params.delete('profile_session_key')
+        end
+        @facebook_profile_params
+      end
+
       def redirect_to(*args)
         if request_is_for_a_facebook_canvas? and !request_is_facebook_tab?
           render :text => fbml_redirect_tag(*args)
@@ -100,7 +113,8 @@ module Facebooker
         # if we're inside the facebook session and there is no session key,
         # that means the user revoked our access
         # we don't want to keep using the old expired key from the cookie. 
-        request_comes_from_facebook? and params[:fb_sig_session_key].blank?
+        (request_is_facebook_tab? && params[:fb_sig_profile_session_key].blank?) ||
+        (request_comes_from_facebook? && params[:fb_sig_session_key].blank?)
       end
       
       def clear_facebook_session_information
@@ -115,7 +129,9 @@ module Facebooker
           clear_facebook_session_information
           false
         else
-          !session[:facebook_session].blank? &&  (params[:fb_sig_session_key].blank? || session[:facebook_session].session_key == facebook_params[:session_key])
+          sig_session_key_key = request_is_facebook_tab? ? :fb_sig_profile_session_key : :fb_sig_session_key
+          session_key_key = request_is_facebook_tab? ? :profile_session_key : :session_key
+          !session[:facebook_session].blank? &&  (params[sig_session_key_key].blank? || session[:facebook_session].session_key == facebook_params[session_key_key])
         end
       end
       
@@ -184,6 +200,11 @@ module Facebooker
           @facebook_session.secure_with!(signature['session_key'], signature['user'], signature['expires'])
           session[:facebook_session] = @facebook_session
         end
+      end
+
+      def secure_with_facebook_profile_params!
+        return unless request_is_facebook_tab?
+        secure_with_facebook_signature!(facebook_profile_params)
       end
 
       #override to specify where the user should be sent after logging in
