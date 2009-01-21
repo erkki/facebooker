@@ -27,7 +27,11 @@ module Facebooker
       end
       
       def create_facebook_session
-        secure_with_facebook_params! || secure_with_cookies! || secure_with_token!
+        if request_is_facebook_tab?
+          secure_with_facebook_profile_params!
+        else
+          secure_with_facebook_params! || secure_with_cookies! || secure_with_token!
+        end
       end
       
       def set_facebook_session
@@ -89,7 +93,8 @@ module Facebooker
         # if we're inside the facebook session and there is no session key,
         # that means the user revoked our access
         # we don't want to keep using the old expired key from the cookie. 
-        request_comes_from_facebook? and params[:fb_sig_session_key].blank?
+        (request_is_facebook_tab? && params[:fb_sig_profile_session_key].blank?) ||
+        (request_comes_from_facebook? && params[:fb_sig_session_key].blank?)
       end
       
       def clear_facebook_session_information
@@ -104,7 +109,9 @@ module Facebooker
           clear_facebook_session_information
           false
         else
-          !session[:facebook_session].blank? &&  (params[:fb_sig_session_key].blank? || session[:facebook_session].session_key == facebook_params[:session_key])
+          sig_session_key_key = request_is_facebook_tab? ? :fb_sig_profile_session_key : :fb_sig_session_key
+          session_key_key = request_is_facebook_tab? ? :profile_session_key : :session_key
+          !session[:facebook_session].blank? &&  (params[sig_session_key_key].blank? || session[:facebook_session].session_key == facebook_params[session_key_key])
         end
       end
       
@@ -166,7 +173,17 @@ module Facebooker
           @facebook_session
         end
       end
-      
+
+      def secure_with_facebook_profile_params!
+        return unless request_is_facebook_tab?
+
+        if ['profile_user', 'profile_session_key'].all? {|element| facebook_params[element]}
+          @facebook_session = new_facebook_session
+          @facebook_session.secure_with!(facebook_params['profile_session_key'], facebook_params['profile_user'], facebook_params['expires'])
+          session[:facebook_session] = @facebook_session
+        end
+      end
+
       #override to specify where the user should be sent after logging in
       def after_facebook_login_url
         nil

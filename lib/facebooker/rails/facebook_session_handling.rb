@@ -55,7 +55,11 @@ class CGI
       end
 
       def facebook_session_key
-        'fb_sig_session_key'
+        if request_parameters['fb_sig_in_profile_tab'] && request_parameters['fb_sig_in_profile_tab'] == '1'
+          'fb_sig_profile_session_key'
+        else
+          'fb_sig_session_key'
+        end
       end
 
       alias :create_new_id_aliased_by_facebooker :create_new_id
