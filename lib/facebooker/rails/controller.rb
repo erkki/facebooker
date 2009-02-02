@@ -12,7 +12,42 @@ module Facebooker
         controller.helper_method :request_comes_from_facebook?
       end
 
-    
+      # START FB CONNECT
+      def initialize_facebook_connect_session
+        set_facebook_connect_session
+        logout_via_facebook_connect unless login_via_facebook_connect
+      end
+
+      def login_via_facebook_connect
+        if !logged_in? && facebook_connect_session_secured?
+          session[:logged_in_via_facebook] = true if login!
+        end
+      end
+
+      # override this method and provide your own native login implementation
+      def login!
+        false
+      end
+
+      def logout_via_facebook_connect
+        reset_session if logged_in_via_facebook? && !facebook_connect_session_secured?
+      end
+
+      def logged_in_via_facebook?
+        session[:facebook_session] && session[:logged_in_via_facebook]
+      end
+
+      def facebook_connect_session_secured?
+        session[:facebook_session] && session[:facebook_session].logged_into_facebook_connect?
+      end
+
+      def set_facebook_connect_session
+        session[:facebook_session] = nil
+        session_set_handler(secure_with_facebook_cookies!)
+      end
+
+      # END FB CONNECT
+
       def facebook_session
         @facebook_session
       end
@@ -20,17 +55,24 @@ module Facebooker
       def facebook_session_parameters
         {:fb_sig_session_key=>params[:fb_sig_session_key]}
       end
-      
-      
+
       def set_facebook_session
-        returning session_set = session_already_secured? ||  secure_with_facebook_params! || secure_with_cookies! || secure_with_token!  do
+        session_set_handler(session_already_secured? ||  secure_with_facebook_params! || secure_with_cookies! || secure_with_token!)
+      end
+
+      def session_set_handler(session_set)
+        returning session_set do
           if session_set
             capture_facebook_friends_if_available! 
             Session.current = facebook_session
           end
         end
       end
-      
+
+      def facebook_cookies
+        @facebook_cookies ||= verified_facebook_cookies
+      end
+
       def facebook_params
         @facebook_params ||= verified_facebook_params
       end      
@@ -112,17 +154,25 @@ module Facebooker
           session[:facebook_session] = @facebook_session
         end
       end
-      
+
+      def secure_with_facebook_cookies!
+        return unless cookies[Facebooker.api_key]
+        secure_with_facebook_signature!(facebook_cookies)
+      end
+
       def secure_with_facebook_params!
         return unless request_comes_from_facebook?
-        
-        if ['user', 'session_key'].all? {|element| facebook_params[element]}
+        secure_with_facebook_signature!(facebook_params)
+      end
+
+      def secure_with_facebook_signature!(signature)
+        if ['user', 'session_key'].all? {|element| signature[element]}
           @facebook_session = new_facebook_session
-          @facebook_session.secure_with!(facebook_params['session_key'], facebook_params['user'], facebook_params['expires'])
+          @facebook_session.secure_with!(signature['session_key'], signature['user'], signature['expires'])
           session[:facebook_session] = @facebook_session
         end
       end
-      
+
       #override to specify where the user should be sent after logging in
       def after_facebook_login_url
         nil
@@ -153,22 +203,30 @@ module Facebooker
       end
 
       def verified_facebook_params
-        facebook_sig_params = params.inject({}) do |collection, pair|
-          collection[pair.first.sub(/^fb_sig_/, '')] = pair.last if pair.first[0,7] == 'fb_sig_'
+        verified_facebook_signature(params, 'fb_sig')
+      end
+
+      def verified_facebook_cookies
+        flat_cookies = cookies.inject({}) {|sum,val| sum[val[0]] = val[1][0]; sum }
+        verified_facebook_signature(flat_cookies, Facebooker.api_key)
+      end
+
+      def earliest_valid_session
+        48.hours.ago
+      end
+
+      def verified_facebook_signature(source, prefix)
+        facebook_sig_params = source.inject({}) do |collection, pair|
+          collection[pair.first.sub(/^#{prefix}_/, '')] = pair.last if pair.first[0,prefix.length + 1] == "#{prefix}_"
           collection
         end
-        verify_signature(facebook_sig_params,params['fb_sig'])
-
+        verify_signature(facebook_sig_params,source[prefix])
         facebook_sig_params.inject(HashWithIndifferentAccess.new) do |collection, pair| 
           collection[pair.first] = facebook_parameter_conversions[pair.first].call(pair.last)
           collection
         end
       end
-      
-      def earliest_valid_session
-        48.hours.ago
-      end
-      
+
       def verify_signature(facebook_sig_params,expected_signature)
         raw_string = facebook_sig_params.map{ |*args| args.join('=') }.sort.join
         actual_sig = Digest::MD5.hexdigest([raw_string, Facebooker::Session.secret_key].join)
@@ -176,7 +234,7 @@ module Facebooker
         raise Facebooker::Session::SignatureTooOld if facebook_sig_params['time'] && Time.at(facebook_sig_params['time'].to_f) < earliest_valid_session
         true
       end
-      
+
       def facebook_parameter_conversions
         @facebook_parameter_conversions ||= Hash.new do |hash, key| 
           lambda{|value| value}
