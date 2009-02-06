@@ -19,13 +19,18 @@ module Facebooker
       end
 
       def login_via_facebook_connect
-        if !logged_in? && facebook_connect_session_secured?
-          session[:logged_in_via_facebook] = true if login!
+        if !native_facebook_connect_user_logged_in? && facebook_connect_session_secured?
+          session[:logged_in_via_facebook] = true if login_native_facebook_connect_user
         end
       end
 
       # override this method and provide your own native login implementation
-      def login!
+      def native_facebook_connect_user_logged_in?
+        false
+      end
+
+      # override this method and provide your own native login implementation
+      def login_native_facebook_connect_user
         false
       end
 
